@@ -1,7 +1,11 @@
 import * as bodyParser from "body-parser";
 import express from "express";
-import { TonClient, WalletContractV3R2 } from "ton";
-import { mnemonicToWalletKey } from "ton-crypto";
+import { TonClient, WalletContractV3R2, internal } from "ton";
+import {
+  mnemonicToWalletKey,
+  mnemonicToPrivateKey,
+  mnemonicNew,
+} from "ton-crypto";
 import { Event } from "./wrappers/Event";
 import { Address, Sender } from "ton-core";
 
@@ -26,17 +30,19 @@ app.post("/event", async (req: express.Request, res: express.Response) => {
       // endpoint: 'https://testnet.toncenter.com/api/v2/jsonRPC',
       apiKey: req.body.tonApiKey,
     });
-
+    console.log("api", req.body.tonApiKey);
     const mnemonic: string = req.body.seeds;
-
+    console.log(req.body);
     const keypair = await mnemonicToWalletKey(mnemonic.split(" "));
-    console.log(keypair.publicKey);
+    console.log(keypair.secretKey);
     const wallet: WalletContractV3R2 = WalletContractV3R2.create({
       publicKey: keypair.publicKey,
       workchain: 0,
     });
 
-    console.log(`Wallet address ${wallet.address}`);
+    console.log(
+      `Wallet address ${wallet.address} ${wallet.init.data} ${wallet.init.code}`
+    );
 
     const sender: Sender = wallet.sender(
       client.provider(wallet.address, wallet.init),
@@ -48,7 +54,8 @@ app.post("/event", async (req: express.Request, res: express.Response) => {
       wallet.address,
       req.body.type
     );
-    await event.deploy(sender);
+    // const re = await event.deploy(sender);
+    // console.log("event", re);
 
     // Get the Event address
     const addr: Address = event.address;
@@ -64,7 +71,7 @@ app.post("/event", async (req: express.Request, res: express.Response) => {
     eventNew = event;
     res.status(200).json(response);
   } catch (error: any) {
-    console.log(error);
+    console.log(error.message);
     const response = {
       status: "error",
       message: error.message,
@@ -76,23 +83,33 @@ app.post("/event", async (req: express.Request, res: express.Response) => {
 
 // API endpoint to place bet on an event.
 app.post("/event/bet", async (req: express.Request, res: express.Response) => {
-  const { via, outcome, amount } = req.body;
+  const { outcome, amount } = req.body;
   // input by me
   const client: TonClient = new TonClient({
-    // endpoint: "https://toncenter.com/api/v2/jsonRPC",
-    endpoint: "https://testnet.toncenter.com/api/v2/jsonRPC",
+    endpoint: "https://toncenter.com/api/v2/jsonRPC",
+    // endpoint: "https://testnet.toncenter.com/api/v2/jsonRPC",
     apiKey: req.body.tonApiKey,
   });
 
-  const mnemonic: string =
-    "burger impose alone special echo help above exact medal reunion cage crawl ripple goat wrist alien theme stairs field coffee stamp pepper lock person";
-
-  const keypair = await mnemonicToWalletKey(mnemonic.split(" "));
-  console.log(keypair.publicKey);
+  // const mnemonic: string =
+  //   "burger impose alone special echo help above exact medal reunion cage crawl ripple goat wrist alien theme stairs field coffee stamp pepper lock person";
+  const mnemonic: string[] = await mnemonicNew();
+  const keypair = await mnemonicToPrivateKey(mnemonic);
+  console.log(keypair.secretKey);
   const wallet: WalletContractV3R2 = WalletContractV3R2.create({
     publicKey: keypair.publicKey,
     workchain: 0,
   });
+
+  let contract = client.open(wallet);
+  // Get balance
+  let balance: bigint = await contract.getBalance();
+
+  // Create a transfer
+  let seqno: number = await contract.getSeqno();
+  console.log(">>>>>", seqno);
+
+  // console.log("transfer", transfer);
 
   // input by me
   const sender: Sender = wallet.sender(
@@ -104,11 +121,23 @@ app.post("/event/bet", async (req: express.Request, res: express.Response) => {
   try {
     // await eventNew.bet(wallet, outcome, amount);
     // input by me
-    await eventNew.bet(senderNew, outcome, amount);
-
-    res.status(200).send("Bet placed successfully.");
+    await contract.sendTransfer({
+      secretKey: keypair.secretKey,
+      seqno: seqno,
+      messages: [
+        internal({
+          to: "EQDrjaLahLkMB-hMCmkzOyBuHJ139ZUYmPHu6RRBKnbdLIYI",
+          value: "0.001", // 0.001 TON
+          // body: "Hello", // optional comment
+          // bounce: false,
+        }),
+      ],
+    });
+    const re = await eventNew.bet(sender, outcome, amount);
+    console.log(">>>>>>>>>", re);
+    res.status(200).json({ msg: "Bet placed successfully." });
   } catch (error) {
-    console.error(error);
+    console.error(">>>>>>>>>>>>", error);
     res.status(500).send("Error placing bet.");
   }
 });
